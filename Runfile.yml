@@ -1,0 +1,24 @@
+tasks:
+  dev:
+    cmd:
+      - go run ./
+
+  build:
+    env:
+      CGO_ENABLED: 0
+      GOARCH:
+        default:
+          sh: go env GOARCH
+    cmd:
+      - echo "building binary for (ARCH=$GOARCH)"
+      - go build -o ./bin/ip-dns-$GOARCH .
+
+  docker:build:
+    cmd:
+      - run: build
+        env:
+          GOARCH: amd64
+      - run: build
+        env:
+          GOARCH: arm64
+      - docker buildx build --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true --platform linux/amd64,linux/arm64  -t github.com/nxtcoder17/ip-dns:latest . --build-arg BINARY="./bin/ip-dns"
