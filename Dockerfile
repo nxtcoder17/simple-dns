@@ -13,14 +13,16 @@ RUN --mount=type=bind,source=flake.nix,target=flake.nix \
   --mount=type=bind,source=flake.lock,target=flake.lock \
   --mount=type=bind,source=go.mod,target=go.mod \
   --mount=type=bind,source=go.sum,target=go.sum \
-  --mount=type=bind,target=/app \
+  --mount=type=bind,target=/app,rw \
   <<EOF
 nix develop --command \
-  run build out=./bin/simple-dns-$TARGETOS-$TARGETARCH
+  run build output=/out/simple-dns-$TARGETOS-$TARGETARCH
 EOF
+
+FROM scratch AS executable
+COPY --from=builder /out/simple-dns-* /
 
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /home/nonroot
-ARG TARGETOS TARGETARCH
-COPY --from=builder --chown=nonroot:nonroot /app/bin/simple-dns-$TARGETOS-$TARGETARCH ./simple-dns
+COPY --from=builder --chown=nonroot:nonroot /out/simple-dns-* ./simple-dns
 ENTRYPOINT ["./simple-dns"]

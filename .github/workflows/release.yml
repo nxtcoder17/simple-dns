@@ -53,8 +53,10 @@ jobs:
             --cache-to type=registry,ref="$buildx_cache",mode=max,compression=zstd,compression-level=13,force-compression=true \
             --cache-from type=registry,ref="$buildx_cache" \
             --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true \
-            --output=type=local,dest=/tmp/out \
           .
+
+          docker buildx build --target=executable --output=type=local,dest=/tmp/binaries .
+          ls -al /tmp/binaries
 
       - name: upload to github release
         shell: bash
@@ -62,5 +64,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           version: ${{steps.meta.outputs.version}}
         run: |+
-          gh release upload $version -R ${{github.repository}} /tmp/out/app/bin/*
+          gh release upload $version -R ${{github.repository}} /tmp/binaries/simple-dns-*
           echo "🚀 uploaded binaries to github release"

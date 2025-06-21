@@ -10,7 +10,7 @@ tasks:
   build:
     env:
       CGO_ENABLED: 0
-      out:
+      output:
         default: "./bin/ip-dns"
       GOOS:
         default:
@@ -20,7 +20,7 @@ tasks:
           sh: go env GOARCH
     cmd:
       - echo "building binary for ($GOOS/$GOARCH)"
-      - go build -v -ldflags='-s -w' -o $out ./cmd/
+      - go build -v -ldflags='-s -w' -o $output ./cmd/
 
   docker:build:
     cmd:
