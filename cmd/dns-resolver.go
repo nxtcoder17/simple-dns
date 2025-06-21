@@ -1,11 +1,18 @@
 package main
 
 import (
+	"crypto/rand"
 	"fmt"
 	"strings"
 
 	"github.com/miekg/dns"
 )
+
+func newRequestID() string {
+	b := make([]byte, 3)
+	rand.Read(b)
+	return string(fmt.Sprintf("%x", b))
+}
 
 type DNSServer struct{}
 
@@ -21,35 +28,38 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 
 	query := strings.TrimSuffix(q.Name, ".")
 
-	logger.Debug("querying for ", "query", q.String())
-	defer logger.Debug("[REPLIED]", "query", q.String())
+	logger := logger.With("query.type", dns.Type(q.Qtype).String(), "query.host", query, "request.id", newRequestID())
+
+	logger.Debug("[REQUEST] started")
+	defer logger.Debug("[REPLIED]")
 
 	switch q.Qtype {
 	case dns.TypeA:
 		{
-			logger.Debug("querying for ", "host", q.Name)
-			logger.Debug("trying with upstream dns servers", "host", q.Name)
+			logger.Debug("[step/upstream] dns servers")
 			for k, addr := range cfg.UpstreamDNSServers {
 				if strings.HasSuffix(query, k) {
+					logger.Debug("[step/upstream] found correct upstream", "upstream", k, "@", addr)
 					if !strings.HasSuffix(addr, ":53") {
 						addr += ":53"
 					}
 					reply, err := dns.Exchange(r, addr)
 					if err != nil {
-						logger.Error("failed to exchange dns with upstream", "err", err, "upstream", addr)
+						logger.Error("[step/upstream] failed to exchange dns with upstream", "err", err, "upstream", k)
 						msg.SetRcode(r, dns.RcodeNameError)
 						w.WriteMsg(msg)
 						return
 					}
+					logger.Debug("[REPLY]", "reply", reply)
 					w.WriteMsg(reply)
 					return
 				}
 			}
 
-			logger.Debug("trying with custom resolver", "host", query)
+			logger.Debug("[step/simple-dns] inbuilt")
 			ip, err := resolve(query)
 			if err != nil {
-				logger.Debug("custom resolver", "host", q.Name, "ip", ip, "err", err)
+				logger.Debug("[step/simple-dns] failed to resolve", "err", err)
 				msg.SetRcode(r, int(dns.ExtendedErrorCodeStaleNXDOMAINAnswer))
 				rr, _ := dns.NewRR(fmt.Sprintf("%s SOA ", q.Name))
 				msg.Answer = append(msg.Answer, rr)
@@ -57,9 +67,13 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 				return
 			}
 
-			logger.Debug("custom resolver", "host", q.Name, "ip", ip)
 			if ip != "" {
-				rr, _ := dns.NewRR(fmt.Sprintf("%s A %s ", q.Name, ip))
+				logger.Debug("[step/simple-dns] inbuilt found", "ip", ip)
+				rr, err := dns.NewRR(fmt.Sprintf("%s\t5\t%s\t%s\t%s", q.Name, dns.Class(q.Qclass).String(), dns.Type(q.Qtype).String(), ip))
+				if err != nil {
+					msg.SetRcode(r, dns.RcodeFormatError)
+					w.WriteMsg(msg)
+				}
 				msg.Answer = append(msg.Answer, rr)
 				w.WriteMsg(msg)
 				return
@@ -72,18 +86,12 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 			logger.Debug("trying default dns servers", "dns-server", dnsAddr)
 			reply, err := dns.Exchange(r, dnsAddr)
 			if err != nil {
-				logger.Error("failed to exchange dns", "err", err)
+				logger.Error("[step/fallback] failed to exchange dns with upstream", "err", err, "fallback", dnsAddr)
+				msg.SetRcode(r, dns.RcodeNameError)
+				w.WriteMsg(msg)
+				return
 			}
 			w.WriteMsg(reply)
-			// if err != nil {
-			// 	msg.SetRcode(r, int(dns.ExtendedErrorCodeStaleNXDOMAINAnswer))
-			// 	rr, _ := dns.NewRR(fmt.Sprintf("%s SOA ", q.Name))
-			// 	msg.Answer = append(msg.Answer, rr)
-			// 	w.WriteMsg(msg)
-			// 	return
-			// }
-			// msg.Answer = append(msg.Answer, reply.Answer...)
-			// w.WriteMsg(msg)
 			return
 		}
 	default:
@@ -95,6 +103,18 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func resolve(dnsQuery string) (ip string, err error) {
+	// STEP 2: check for hosts
+	if ip, ok := cfg.Hosts[dnsQuery]; ok {
+		return ip, nil
+	}
+
+	// STEP 3: check for wildcard hosts
+	for k, ip := range cfg.WildcardHosts {
+		if strings.HasSuffix(dnsQuery, k) {
+			return ip, nil
+		}
+	}
+
 	// STEP 1: check for echo request
 	sp := strings.SplitN(dnsQuery, ".", 5)
 	if len(sp) != 5 {
@@ -106,18 +126,6 @@ func resolve(dnsQuery string) (ip string, err error) {
 
 	if _, ok := cfg.EchoHosts[echoHost]; ok {
 		return dnsQuery[:len(dnsQuery)-len(echoHost)], nil
-	}
-
-	// STEP 2: check for hosts
-	if ip, ok := cfg.Hosts[dnsQuery]; ok {
-		return ip, nil
-	}
-
-	// STEP 3: check for wildcard hosts
-	for k, ip := range cfg.WildcardHosts {
-		if strings.HasSuffix(dnsQuery, k) {
-			return ip, nil
-		}
 	}
 
 	return "", nil
