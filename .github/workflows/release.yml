@@ -1,0 +1,88 @@
+name: build simple dns
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  github_release:
+    runs-on: ubuntu-latest
+    name: Creating a Github Release
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - uses: nxtcoder17/actions/metadata@main
+        id: meta
+
+      - name: create github release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          version: ${{steps.meta.outputs.version}}
+        run: |+
+          if ${{ steps.meta.outputs.is_nightly }}; then
+            gh release delete ${{steps.meta.outputs.version}} -y --cleanup-tag -R ${{ github.repository }} || echo "cleaned up ${{steps.meta.outputs.version}} tag"
+          fi
+
+          echo "🔖 creating release for tag ${{ steps.meta.outputs.version }}"
+          gh release create "${{steps.meta.outputs.version}}" -R "${{ github.repository }}" --generate-notes --prerelease --draft=false || (echo "release (${{ steps.meta.outputs.version }}) already exists, exiting ..." && exit 1)
+
+  build-and-push:
+    runs-on: ubuntu-latest
+    name: container build
+    needs:
+      - github_release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: nxtcoder17/actions/setup-docker@main
+        with:
+          docker_registry: "ghcr.io"
+          docker_username: ${{ github.actor }}
+          docker_password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: docker build and push
+        env:
+          image: "ghcr.io/${{ github.repository }}:${{ needs.github_release.outputs.version }}"
+          buildx_cache: "ghcr.io/${{ github.repository }}:build-cache"
+        run: |+
+          pushd ./go-example
+
+          docker buildx build -t "$image" \
+            --cache-to type=registry,ref="$buildx_cache",mode=max,compression=zstd,compression-level=13,force-compression=true \
+            --cache-from type=registry,ref="$buildx_cache" \
+            --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true \
+            --output=type=local,dest=/tmp/out \
+          .
+
+      - name: upload to github release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          version: ${{steps.meta.outputs.version}}
+        run: |+
+          gh release upload $version -R ${{github.repository}} /tmp/out/app/bin/*
+          echo "🚀 updated binaries to github release"
+
+      - name: mark release as latest
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          version: ${{needs.github_release.outputs.version}}
+        shell: bash
+        run: |+
+          gh release edit $version -R ${{ github.repository }} --latest
+
+

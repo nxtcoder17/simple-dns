@@ -1,0 +1,9 @@
+image:
+  repository: "ghcr.io/nxtcoder17/ip-dns"
+  tag: "latest"
+  pullPolicy: "Always"
+
+ingress:
+  host: ""
+
+domainSuffix: ""

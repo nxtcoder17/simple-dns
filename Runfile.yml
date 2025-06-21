@@ -1,3 +1,7 @@
+includes:
+  helm:
+    runfile: ./deploy/helm/Runfile.yml
+
 tasks:
   dev:
     cmd:
@@ -6,12 +10,17 @@ tasks:
   build:
     env:
       CGO_ENABLED: 0
+      out:
+        default: "./bin/ip-dns"
+      GOOS:
+        default:
+          sh: go env GOOS
       GOARCH:
         default:
           sh: go env GOARCH
     cmd:
-      - echo "building binary for (ARCH=$GOARCH)"
-      - go build -o ./bin/ip-dns-$GOARCH .
+      - echo "building binary for ($GOOS/$GOARCH)"
+      - go build -v -ldflags='-s -w' -o $out ./cmd/
 
   docker:build:
     cmd:
@@ -21,4 +30,4 @@ tasks:
       - run: build
         env:
           GOARCH: arm64
-      - docker buildx build --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true --platform linux/amd64,linux/arm64  -t github.com/nxtcoder17/ip-dns:latest . --build-arg BINARY="./bin/ip-dns"
+      - docker buildx build --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true --platform linux/amd64,linux/arm64  -t ghcr.io/nxtcoder17/ip-dns:latest . --build-arg BINARY="./bin/ip-dns"

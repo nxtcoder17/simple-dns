@@ -1,0 +1,6 @@
+apiVersion: v2
+name: ip-dns
+description: helm chart for installating ip-dns
+type: application
+version: 0.1.0
+appVersion: "1.16.0"

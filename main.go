@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
@@ -12,11 +13,12 @@ import (
 	"sync"
 
 	"github.com/miekg/dns"
-	"github.com/nxtcoder17/go.pkgs/log"
+	"github.com/nxtcoder17/fastlog"
 	"github.com/nxtcoder17/ivy"
+	"github.com/nxtcoder17/ivy/middleware"
 )
 
-const domainSuffix = ".my-server.com."
+var logger *fastlog.Logger
 
 type DNSServer struct{}
 
@@ -38,12 +40,13 @@ func (s *DNSServer) ServeDNS(w dns.ResponseWriter, r *dns.Msg) {
 }
 
 func parseQuery(query string) (string, bool) {
+	slog.Debug("incoming", "query", query)
 	if !strings.HasSuffix(query, domainSuffix) {
 		return "", false
 	}
 
 	trimmed := strings.TrimSuffix(query, domainSuffix)
-	parts := strings.Split(trimmed, ".")
+	parts := strings.Split(trimmed, "-")
 	if len(parts) != 4 {
 		return "", false
 	}
@@ -58,6 +61,8 @@ func parseQuery(query string) (string, bool) {
 
 func startDoH() *ivy.Router {
 	router := ivy.NewRouter()
+
+	router.Use(middleware.Logger())
 
 	router.Post("/dns-query", func(c *ivy.Context) error {
 		body, err := io.ReadAll(c.Body())
@@ -82,6 +87,7 @@ func startDoH() *ivy.Router {
 					rr, _ := dns.NewRR(fmt.Sprintf("%s A %s", q.Name, ip))
 					resp.Answer = append(resp.Answer, rr)
 				}
+				slog.Info("resolved", "query", q.Name, "resolved.value", ip, "resolved.status", valid)
 			}
 		}
 
@@ -96,16 +102,19 @@ func startDoH() *ivy.Router {
 	return router
 }
 
-var logger log.Logger
+var domainSuffix string
 
 func main() {
 	tcpAddr := flag.String("tcp-addr", ":5953", "--tcp-addr [host]:<port>")
 	udpAddr := flag.String("udp-addr", ":5953", "--udp-addr [host]:<port>")
 	httpAddr := flag.String("http-addr", ":8053", "--http-addr [host]:<port>")
 
+	flag.StringVar(&domainSuffix, "domain-suffix", "", "--domain-suffix <domain>")
+
 	flag.Parse()
 
 	logger = log.New()
+	slog.SetDefault(logger.Slog())
 
 	srv := &DNSServer{}
 

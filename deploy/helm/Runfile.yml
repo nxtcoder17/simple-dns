@@ -1,0 +1,18 @@
+env:
+  release_name: "ip-dns"
+  release_namespace: "ip-dns"
+
+tasks:
+  debug:
+    cmds:
+      - helm install --dry-run=server --debug $release_name --namespace $release_namespace --create-namespace . -f $helm_values_file | {{.SCHELM}} -f /tmp/manifests
+      - tree /tmp/manifests
+
+  install:
+    # env:
+    #   helm_values_file:
+    #     default: ./values.yaml
+    cmds:
+      - helm upgrade --install $release_name --namespace $release_namespace --create-namespace . -f $helm_values_file
+
+
