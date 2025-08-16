@@ -4,6 +4,9 @@ on:
   workflow_dispatch:
 
   push:
+    branches:
+      - master
+
     tags:
       - 'v*'
 
@@ -12,31 +15,47 @@ permissions:
   packages: write
 
 jobs:
-  build-and-release:
+  github-release:
+    name: Create Github Release
     runs-on: ubuntu-latest
-    name: Build and Release
     outputs:
       version: ${{ steps.meta.outputs.version }}
+      is_nightly: ${{ steps.meta.outputs.is_nightly }}
+      sanitized_ref: ${{ steps.meta.outputs.sanitized_ref }}
+      sanitized_default_branch: ${{ steps.meta.outputs.sanitized_default_branch }}
+    steps:
+      - uses: nxtcoder17/actions/metadata@main
+        id: meta
+
+      - name: create github release
+        uses: nxtcoder17/actions/github-release-create@main
+        with:
+          name: ${{steps.meta.outputs.version}}
+          github_token: ${{github.token}}
+
+  build-image:
+    strategy:
+      fail-fast: true
+      matrix:
+        arch:
+          - amd64
+          - arm64
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
+    name: Build Container Image
+    needs:
+      - github-release
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
-
-      - uses: nxtcoder17/actions/metadata@main
-        id: meta
-
-      - name: create nightly github release (if applicable)
-        shell: bash
-        if: ${{ steps.meta.outputs.is_nightly }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          version: ${{steps.meta.outputs.version}}
-        run: |+
-          echo "🔖 recreating release for nightly tag ${{ steps.meta.outputs.version }}"
-          gh release delete ${{steps.meta.outputs.version}} -y --cleanup-tag -R ${{ github.repository }} || echo "cleaned up ${{steps.meta.outputs.version}} tag"
-          gh release create "${{steps.meta.outputs.version}}" -R "${{ github.repository }}" --generate-notes --prerelease --draft=false
 
       - uses: nxtcoder17/actions/setup-docker@main
         with:
@@ -46,23 +65,34 @@ jobs:
 
       - name: docker build and push
         env:
-          image: "ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}"
-          buildx_cache: "ghcr.io/${{ github.repository }}:build-cache"
+          IMAGE: "ghcr.io/${{ github.repository }}:${{ needs.github-release.outputs.version }}-${{ matrix.arch }}"
+          BUILDX_CACHE: "ghcr.io/${{ github.repository }}/controller:buildx-cache-${{needs.github-release.outputs.sanitized_ref}}-${{ matrix.arch }}"
+          BUILDX_CACHE_DEFAULT: "ghcr.io/${{ github.repository }}/controller:buildx-cache-${{ needs.github-release.outputs.sanitized_default_branch }}-${{ matrix.arch }}"
         run: |+
-          docker buildx build -t "$image" \
-            --cache-to type=registry,ref="$buildx_cache",mode=max,compression=zstd,compression-level=13,force-compression=true \
-            --cache-from type=registry,ref="$buildx_cache" \
+          docker buildx build -t "$IMAGE" \
+            --cache-to type=registry,ref="$BUILDX_CACHE",mode=max,compression=zstd,compression-level=13,force-compression=true \
+            --cache-from type=registry,ref="$BUILDX_CACHE" \
+            --cache-from type=registry,ref="$BUILDX_CACHE_DEFAULT" \
             --output=type=image,compression=zstd,force-compression=true,compression-level=13,push=true \
           .
 
-          docker buildx build --target=executable --output=type=local,dest=/tmp/binaries .
-          ls -al /tmp/binaries
+  publish-multiarch-image:
+    runs-on: ubuntu-latest
+    name: publish-multiarch-image
+    needs:
+      - github-release
+      - build-image
+    steps:
+      - uses: nxtcoder17/actions/setup-docker@main
+        with:
+          docker_registry: "ghcr.io"
+          docker_username: ${{ github.actor }}
+          docker_password: ${{ github.token }}
+          qemu: false
 
-      - name: upload to github release
-        shell: bash
+      - shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          version: ${{steps.meta.outputs.version}}
+          IMAGE: "ghcr.io/${{ github.repository }}"
+          tag: "${{ needs.github-release.outputs.version }}"
         run: |+
-          gh release upload $version -R ${{github.repository}} /tmp/binaries/simple-dns-*
-          echo "🚀 uploaded binaries to github release"
+          docker buildx imagetools create -t $IMAGE:$tag $IMAGE:$tag-amd64 $IMAGE:$tag-arm64
