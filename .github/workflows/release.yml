@@ -20,9 +20,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.meta.outputs.version }}
-      is_nightly: ${{ steps.meta.outputs.is_nightly }}
-      sanitized_ref: ${{ steps.meta.outputs.sanitized_ref }}
-      sanitized_default_branch: ${{ steps.meta.outputs.sanitized_default_branch }}
+      ref_slug: ${{ steps.meta.outputs.ref_slug }}
+      default_branch_slug: ${{ steps.meta.outputs.default_branch_slug }}
     steps:
       - uses: nxtcoder17/actions/metadata@main
         id: meta
@@ -32,6 +31,7 @@ jobs:
         with:
           name: ${{steps.meta.outputs.version}}
           github_token: ${{github.token}}
+          pre_release: ${{ !fromJSON(steps.meta.outputs.is_tag) }}
 
   build-image:
     strategy:
@@ -66,8 +66,8 @@ jobs:
       - name: docker build and push
         env:
           IMAGE: "ghcr.io/${{ github.repository }}:${{ needs.github-release.outputs.version }}-${{ matrix.arch }}"
-          BUILDX_CACHE: "ghcr.io/${{ github.repository }}/controller:buildx-cache-${{needs.github-release.outputs.sanitized_ref}}-${{ matrix.arch }}"
-          BUILDX_CACHE_DEFAULT: "ghcr.io/${{ github.repository }}/controller:buildx-cache-${{ needs.github-release.outputs.sanitized_default_branch }}-${{ matrix.arch }}"
+          BUILDX_CACHE: "ghcr.io/${{ github.repository }}:buildx-cache-${{needs.github-release.outputs.ref_slug}}-${{ matrix.arch }}"
+          BUILDX_CACHE_DEFAULT: "ghcr.io/${{ github.repository }}:buildx-cache-${{ needs.github-release.outputs.default_branch_slug }}-${{ matrix.arch }}"
         run: |+
           docker buildx build -t "$IMAGE" \
             --cache-to type=registry,ref="$BUILDX_CACHE",mode=max,compression=zstd,compression-level=13,force-compression=true \
