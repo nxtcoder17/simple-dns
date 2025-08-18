@@ -25,7 +25,8 @@ echo "DOWNLOADED go modules"
 EOF
 
 SHELL ["bash", "-c"]
-RUN --mount=type=bind,source=.,target=/app \
+RUN mkdir -p /out
+RUN --mount=type=bind,target=. \
   --mount=type=cache,target=$GOMODCACHE \
   --mount=type=cache,target=$GOCACHE \
   <<EOF

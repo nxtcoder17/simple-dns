@@ -31,15 +31,12 @@ jobs:
         with:
           name: ${{steps.meta.outputs.version}}
           github_token: ${{github.token}}
-          pre_release: ${{ !fromJSON(steps.meta.outputs.is_tag) }}
+          pre_release: ${{ steps.meta.outputs.is_pre_release }}
 
   build-image:
     strategy:
       fail-fast: true
       matrix:
-        arch:
-          - amd64
-          - arm64
         include:
           - arch: amd64
             runner: ubuntu-latest
@@ -47,7 +44,7 @@ jobs:
             runner: ubuntu-24.04-arm
 
     runs-on: ${{ matrix.runner }}
-    name: Build Container Image
+    name: Build Image
     needs:
       - github-release
     steps:
